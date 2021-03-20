@@ -37,4 +37,5 @@ fn main() {
     link.send(Input::AddOne);
     let result = link.receive();
     assert_eq!(result, Output::Count(1));
+    println!("{:?}", result);
 }

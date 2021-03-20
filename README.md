@@ -1,5 +1,5 @@
 # Wactor
-WASM actor system based on lunatic
+WASM actor system based on [lunatic](https://github.com/lunatic-solutions/lunatic).
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -41,5 +41,11 @@ fn main() {
     link.send(Input::AddOne);
     let result = link.receive();
     assert_eq!(result, Output::Count(1));
+    println!("{:?}", result);
 }
 ```
+
+## Run
+
+    cargo build --release --target=wasm32-wasi --example basic
+    lunatic target/wasm32-wasi/release/examples/basic.wasm
