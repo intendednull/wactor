@@ -37,7 +37,7 @@ impl Actor for Counter {
 }
 
 fn main() {
-    let link = wactor::run::<Counter>();
+    let link = wactor::start::<Counter>();
     link.send(Input::AddOne);
     let result = link.receive();
     assert_eq!(result, Output::Count(1));

@@ -4,7 +4,7 @@ use lunatic::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub fn run<A: Actor>() -> Link<A> {
+pub fn start<A: Actor>() -> Link<A> {
     let (in_sender, in_receiver) = channel::unbounded::<A::Input>();
     let (out_sender, out_receiver) = channel::unbounded::<A::Output>();
 
