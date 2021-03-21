@@ -1,8 +1,8 @@
 //! # Wactor
 //! WASM actor system based on [lunatic](https://github.com/lunatic-solutions/lunatic).
 //!
-//! Actors run on isolated green threads. The cannot share memory, and communicate only through input
-//! and output messages. Consequently messages must be serialized to travel between threads.
+//! Actors run on isolated green threads. They cannot share memory, and communicate only through
+//! input and output messages. Consequently messages must be serialized to travel between threads.
 //!
 //! ## Example
 //! ```rust
