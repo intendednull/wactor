@@ -9,6 +9,7 @@ struct Counter {
 enum Input {
     AddOne,
 }
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 enum Output {
     Count(u32),
@@ -22,20 +23,26 @@ impl Actor for Counter {
         Self { count: 0 }
     }
 
-    fn update(&mut self, msg: Self::Input, responder: &Responder<Self>) {
+    fn handle(&mut self, msg: Self::Input, link: &Link<Self>) {
         match msg {
             Input::AddOne => {
+                // Increment count by 1.
                 self.count += 1;
-                responder.respond(Output::Count(self.count));
+                // Respond with new count. This fails if our recipient has been dropped.
+                link.respond(Output::Count(self.count)).ok();
             }
         }
     }
 }
 
 fn main() {
-    let link = wactor::start::<Counter>();
-    link.send(Input::AddOne);
-    let result = link.receive();
-    assert_eq!(result, Output::Count(1));
-    println!("{:?}", result);
+    // Spawn our actor. We get a bridge for sending and receiving messages. Can be cloned for
+    // multiple owners. Actor is dropped after all bridges have been dropped.
+    let bridge = wactor::spawn::<Counter>();
+    // Send our input message. This fails if our actor has panicked (unrecoverable error).
+    bridge.send(Input::AddOne).expect("Dead actor");
+    // Block until a response is received. This also fails if our actor has panicked.
+    let result = bridge.receive();
+    // Assert we received the correct value.
+    assert_eq!(result, Ok(Output::Count(1)));
 }

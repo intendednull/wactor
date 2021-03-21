@@ -4,67 +4,59 @@ use lunatic::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub fn start<A: Actor>() -> Link<A> {
+/// Actors run on isolated green threads. The cannot share memory, and communicate only through
+/// input and output messages. Consequently messages must be serialized to travel between threads.
+pub trait Actor: Sized {
+    type Input: Serialize + DeserializeOwned;
+    type Output: Serialize + DeserializeOwned;
+
+    /// Create this actor.
+    fn create() -> Self;
+    /// Handle an input message.
+    fn handle(&mut self, msg: Self::Input, link: &Link<Self>);
+}
+
+/// Spawn a new [Actor], returning its [Bridge]. Actor is dropped when all bridges have been
+/// dropped.
+pub fn spawn<A: Actor>() -> Bridge<A> {
     let (in_sender, in_receiver) = channel::unbounded::<A::Input>();
     let (out_sender, out_receiver) = channel::unbounded::<A::Output>();
 
     Process::spawn_with((in_receiver, out_sender), |(receiver, sender)| {
         Context {
-            receiver,
-            responder: Responder { sender },
+            link: Link { sender, receiver },
             actor: A::create(),
         }
         .run()
     })
     .detach();
 
-    Link {
+    Bridge {
         sender: in_sender,
         receiver: out_receiver,
     }
 }
 
-pub struct Responder<A: Actor> {
-    sender: Sender<A::Output>,
-}
-
-impl<A: Actor> Responder<A> {
-    pub fn respond(&self, msg: A::Output) {
-        self.sender.send(msg).ok();
-    }
-}
-
-struct Context<A: Actor> {
-    responder: Responder<A>,
-    receiver: Receiver<A::Input>,
-    actor: A,
-}
-
-impl<A: Actor> Context<A> {
-    fn run(mut self) {
-        while let Ok(msg) = self.receiver.receive() {
-            self.actor.update(msg, &self.responder);
-        }
-    }
-}
-
+/// Bridge to an actor. Can be cloned for multiple owners. Actor is dropped when all bridges have
+/// been dropped.
 #[derive(Serialize, Deserialize)]
-pub struct Link<A: Actor> {
+pub struct Bridge<A: Actor> {
     sender: Sender<A::Input>,
     receiver: Receiver<A::Output>,
 }
 
-impl<A: Actor> Link<A> {
-    pub fn send(&self, msg: A::Input) {
-        self.sender.send(msg).expect("Channel closed");
+impl<A: Actor> Bridge<A> {
+    /// Send input message. This fails if the actor has panicked.
+    pub fn send(&self, msg: A::Input) -> Result<(), ()> {
+        self.sender.send(msg)
     }
-
-    pub fn receive(&self) -> A::Output {
-        self.receiver.receive().expect("Channel closed")
+    /// Block until a response is received. This fails if the actor has panicked.
+    pub fn receive(&self) -> Result<A::Output, ()> {
+        self.receiver.receive()
     }
 }
 
-impl<A: Actor> Clone for Link<A> {
+impl<A: Actor> Clone for Bridge<A> {
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
@@ -73,10 +65,34 @@ impl<A: Actor> Clone for Link<A> {
     }
 }
 
-pub trait Actor: Sized {
-    type Input: Serialize + DeserializeOwned;
-    type Output: Serialize + DeserializeOwned;
+/// Link for responding to input messages.
+pub struct Link<A: Actor> {
+    sender: Sender<A::Output>,
+    receiver: Receiver<A::Input>,
+}
 
-    fn create() -> Self;
-    fn update(&mut self, msg: Self::Input, responder: &Responder<Self>);
+impl<A: Actor> Link<A> {
+    /// Respond with given output message. Fails if recipient has been dropped.
+    pub fn respond(&self, msg: A::Output) -> Result<(), ()> {
+        self.sender.send(msg)
+    }
+
+    fn receive(&self) -> Result<A::Input, ()> {
+        self.receiver.receive()
+    }
+}
+
+/// Context for actor execution.
+struct Context<A: Actor> {
+    link: Link<A>,
+    actor: A,
+}
+
+impl<A: Actor> Context<A> {
+    fn run(mut self) {
+        // Receive messages until we get an error, meaning all recipients have been dropped.
+        while let Ok(msg) = self.link.receive() {
+            self.actor.handle(msg, &self.link);
+        }
+    }
 }
