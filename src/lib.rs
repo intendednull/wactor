@@ -61,7 +61,6 @@
 //!
 //!     cargo build --release --target=wasm32-wasi --example basic
 //!     lunatic target/wasm32-wasi/release/examples/basic.wasm
-
 use lunatic::{
     channel::{self, Receiver, Sender},
     Process,
@@ -117,6 +116,12 @@ impl<A: Actor> Bridge<A> {
     /// Block until a response is received. This fails if the actor has panicked.
     pub fn receive(&self) -> Result<A::Output, ()> {
         self.receiver.receive()
+    }
+
+    /// Send a message and block until a response is received. Fails if actor has panicked.
+    pub fn get(&self, msg: A::Input) -> Result<A::Output, ()> {
+        self.send(msg)?;
+        self.receive()
     }
 }
 
