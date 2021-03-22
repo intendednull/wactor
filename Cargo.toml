@@ -9,5 +9,5 @@ license = "Apache-2.0/MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-lunatic = "0.3.10"
+lunatic = { git = "https://github.com/lunatic-solutions/rust-lib.git" }
 serde = "1.0.124"
