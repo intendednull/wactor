@@ -11,3 +11,8 @@ license = "Apache-2.0/MIT"
 [dependencies]
 lunatic = { git = "https://github.com/lunatic-solutions/rust-lib.git" }
 serde = "1.0.124"
+
+[dev-dependencies]
+bincode = "1.3.2"
+tungstenite = { version = "0.13.0", default-features = false }
+
