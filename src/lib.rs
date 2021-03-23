@@ -110,7 +110,10 @@ pub struct Bridge<A: Actor> {
 
 impl<A: Actor> Bridge<A> {
     /// Send input message. This fails if the actor has panicked.
-    pub fn send(&self, msg: impl Into<A::Input>) -> Result<(), ()> {
+    pub fn send<M>(&self, msg: M) -> Result<(), ()>
+    where
+        M: Into<A::Input>,
+    {
         self.sender.send(msg.into())
     }
     /// Block until a response is received. This fails if the actor has panicked.
@@ -119,7 +122,10 @@ impl<A: Actor> Bridge<A> {
     }
 
     /// Send a message and block until a response is received. Fails if actor has panicked.
-    pub fn get(&self, msg: impl Into<A::Input>) -> Result<A::Output, ()> {
+    pub fn get<M>(&self, msg: M) -> Result<A::Output, ()>
+    where
+        M: Into<A::Input>,
+    {
         self.send(msg)?;
         self.receive()
     }
@@ -142,7 +148,10 @@ pub struct Link<A: Actor> {
 
 impl<A: Actor> Link<A> {
     /// Respond with given output message. Fails if recipient has been dropped.
-    pub fn respond(&self, msg: impl Into<A::Output>) -> Result<(), ()> {
+    pub fn respond<M>(&self, msg: M) -> Result<(), ()>
+    where
+        M: Into<A::Output>,
+    {
         self.sender.send(msg.into())
     }
 
