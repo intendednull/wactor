@@ -61,6 +61,8 @@
 //!
 //!     cargo build --release --target=wasm32-wasi --example basic
 //!     lunatic target/wasm32-wasi/release/examples/basic.wasm
+use std::cell::Cell;
+
 use lunatic::{
     channel::{self, Receiver, Sender},
     Process,
@@ -87,7 +89,11 @@ pub fn spawn<A: Actor>() -> Bridge<A> {
 
     Process::spawn_with((in_receiver, out_sender), |(receiver, sender)| {
         Context {
-            link: Link { sender, receiver },
+            link: Link {
+                sender,
+                receiver,
+                open: Cell::new(true),
+            },
             actor: A::create(),
         }
         .run()
@@ -109,19 +115,35 @@ pub struct Bridge<A: Actor> {
 }
 
 impl<A: Actor> Bridge<A> {
-    /// Send input message. This fails if the actor has panicked.
+    /// Send input message. Fails if the actor has been dropped.
     pub fn send<M>(&self, msg: M) -> Result<(), ()>
     where
         M: Into<A::Input>,
     {
         self.sender.send(msg.into())
     }
-    /// Block until a response is received. This fails if the actor has panicked.
+
+    /// Wait until a response is received. Fails if the actor has been dropped.
+    ///
+    /// # Warning
+    ///
+    /// The message received is not guaranteed to be a related to last sent. Responses are sent in
+    /// the order they're received, so if multiple bridges send messages they may receive something
+    /// unexpected. Hypothetically if all bridges only use [Bridge::get]`, they should receive the
+    /// related message, however this is untested and unreliable.
     pub fn receive(&self) -> Result<A::Output, ()> {
         self.receiver.receive()
     }
 
-    /// Send a message and block until a response is received. Fails if actor has panicked.
+    /// Send a message and wait until for the response is received. Fails if the actor has been
+    /// dropped.
+    ///
+    /// # Warning
+    ///
+    /// The message received is not guaranteed to be a related to last sent. Responses are sent in
+    /// the order they're received, so if multiple bridges send messages they may receive something
+    /// unexpected. Hypothetically if all bridges only use [Bridge::get]`, they should receive the
+    /// related message, however this is untested and unreliable.
     pub fn get<M>(&self, msg: M) -> Result<A::Output, ()>
     where
         M: Into<A::Input>,
@@ -144,6 +166,9 @@ impl<A: Actor> Clone for Bridge<A> {
 pub struct Link<A: Actor> {
     sender: Sender<A::Output>,
     receiver: Receiver<A::Input>,
+    // Whether this link may receive messages. Setting this to true will drop actor after it's done
+    // handling current message.
+    open: Cell<bool>,
 }
 
 impl<A: Actor> Link<A> {
@@ -155,7 +180,16 @@ impl<A: Actor> Link<A> {
         self.sender.send(msg.into())
     }
 
+    /// Signal this actor should be dropped after handling current message.
+    pub fn close(&self) {
+        self.open.set(false);
+    }
+
     fn receive(&self) -> Result<A::Input, ()> {
+        if !self.open.get() {
+            return Err(());
+        }
+
         self.receiver.receive()
     }
 }
