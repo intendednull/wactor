@@ -64,133 +64,74 @@
 use std::cell::Cell;
 
 use lunatic::{
-    channel::{self, Receiver, Sender},
-    Process,
+    process::{self, Process},
+    LunaticError, Mailbox, ReceiveError, Request,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 
 /// Actors run on isolated green threads. The cannot share memory, and communicate only through
 /// input and output messages. Consequently messages must be serialized to travel between threads.
 pub trait Actor: Sized {
     type Input: Serialize + DeserializeOwned;
     type Output: Serialize + DeserializeOwned;
+    type Context: Serialize + DeserializeOwned;
 
     /// Create this actor.
-    fn create() -> Self;
+    fn create(ctx: Self::Context) -> Self;
     /// Handle an input message.
-    fn handle(&mut self, msg: Self::Input, link: &Link<Self>);
+    fn handle(&mut self, msg: &Self::Input, link: &Link<Self>) -> Self::Output;
 }
 
 /// Spawn a new [Actor], returning its [Bridge]. Actor is dropped when all bridges have been
 /// dropped.
-pub fn spawn<A: Actor>() -> Bridge<A> {
-    let (in_sender, in_receiver) = channel::unbounded::<A::Input>();
-    let (out_sender, out_receiver) = channel::unbounded::<A::Output>();
-
-    Process::spawn_with((in_receiver, out_sender), |(receiver, sender)| {
-        Context {
-            link: Link {
-                sender,
-                receiver,
-                open: Cell::new(true),
-            },
-            actor: A::create(),
-        }
-        .run()
-    })
-    .detach();
-
-    Bridge {
-        sender: in_sender,
-        receiver: out_receiver,
-    }
+pub fn spawn_with<A: Actor>(
+    ctx: A::Context,
+) -> Result<Process<Request<<A as Actor>::Input, <A as Actor>::Output>>, LunaticError> {
+    process::spawn_with(
+        ctx,
+        |ctx, mailbox: Mailbox<Request<A::Input, A::Output>>| {
+            Context {
+                link: Link {
+                    mailbox,
+                    open: Cell::new(true),
+                },
+                actor: A::create(ctx),
+            }
+            .run()
+        },
+    )
 }
 
-/// Bridge to an actor. Can be cloned for multiple owners. Actor is dropped when all bridges have
-/// been dropped.
-#[derive(Serialize, Deserialize)]
-pub struct Bridge<A: Actor> {
-    sender: Sender<A::Input>,
-    receiver: Receiver<A::Output>,
+pub fn spawn<A: Actor<Context = ()>>(
+) -> Result<Process<Request<<A as Actor>::Input, <A as Actor>::Output>>, LunaticError> {
+    spawn_with::<A>(())
 }
 
-impl<A: Actor> Bridge<A> {
-    /// Send input message. Fails if the actor has been dropped.
-    pub fn send<M>(&self, msg: M) -> Result<(), ()>
-    where
-        M: Into<A::Input>,
-    {
-        self.sender.send(msg.into())
-    }
-
-    /// Wait until a response is received. Fails if the actor has been dropped.
-    ///
-    /// # Warning
-    ///
-    /// The message received is not guaranteed to be a related to last sent. Responses are sent in
-    /// the order they're received, so if multiple bridges send messages they may receive something
-    /// unexpected. Hypothetically if all bridges only use [Bridge::get]`, they should receive the
-    /// related message, however this is untested and unreliable.
-    pub fn receive(&self) -> Result<A::Output, ()> {
-        self.receiver.receive()
-    }
-
-    /// Send a message and wait until for the response is received. Fails if the actor has been
-    /// dropped.
-    ///
-    /// # Warning
-    ///
-    /// The message received is not guaranteed to be a related to last sent. Responses are sent in
-    /// the order they're received, so if multiple bridges send messages they may receive something
-    /// unexpected. Hypothetically if all bridges only use [Bridge::get]`, they should receive the
-    /// related message, however this is untested and unreliable.
-    pub fn get<M>(&self, msg: M) -> Result<A::Output, ()>
-    where
-        M: Into<A::Input>,
-    {
-        self.send(msg)?;
-        self.receive()
-    }
-}
-
-impl<A: Actor> Clone for Bridge<A> {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-            receiver: self.receiver.clone(),
-        }
-    }
+enum LinkError {
+    Receive(ReceiveError),
+    Closed,
 }
 
 /// Link for responding to input messages.
 pub struct Link<A: Actor> {
-    sender: Sender<A::Output>,
-    receiver: Receiver<A::Input>,
+    mailbox: Mailbox<Request<A::Input, A::Output>>,
     // Whether this link may receive messages. Setting this to true will drop actor after it's done
     // handling current message.
     open: Cell<bool>,
 }
 
 impl<A: Actor> Link<A> {
-    /// Respond with given output message. Fails if recipient has been dropped.
-    pub fn respond<M>(&self, msg: M) -> Result<(), ()>
-    where
-        M: Into<A::Output>,
-    {
-        self.sender.send(msg.into())
-    }
-
     /// Signal this actor should be dropped after handling current message.
     pub fn close(&self) {
         self.open.set(false);
     }
 
-    fn receive(&self) -> Result<A::Input, ()> {
+    fn receive(&self) -> Result<Request<A::Input, A::Output>, LinkError> {
         if !self.open.get() {
-            return Err(());
+            return Err(LinkError::Closed);
         }
 
-        self.receiver.receive()
+        self.mailbox.receive().map_err(LinkError::Receive)
     }
 }
 
@@ -203,8 +144,9 @@ struct Context<A: Actor> {
 impl<A: Actor> Context<A> {
     fn run(mut self) {
         // Receive messages until we get an error, meaning all recipients have been dropped.
-        while let Ok(msg) = self.link.receive() {
-            self.actor.handle(msg, &self.link);
+        while let Ok(request) = self.link.receive() {
+            let response = self.actor.handle(request.data(), &self.link);
+            request.reply(response);
         }
     }
 }

@@ -1,3 +1,4 @@
+use lunatic::Mailbox;
 use serde::{Deserialize, Serialize};
 use wactor::*;
 
@@ -18,31 +19,31 @@ enum Output {
 impl Actor for Counter {
     type Input = Input;
     type Output = Output;
+    type Context = ();
 
-    fn create() -> Self {
+    fn create(_ctx: Self::Context) -> Self {
         Self { count: 0 }
     }
 
-    fn handle(&mut self, msg: Self::Input, link: &Link<Self>) {
+    fn handle(&mut self, msg: &Self::Input, _link: &Link<Self>) -> Self::Output {
         match msg {
             Input::AddOne => {
                 // Increment count by 1.
                 self.count += 1;
                 // Respond with new count. This fails if our recipient has been dropped.
-                link.respond(Output::Count(self.count)).ok();
+                Output::Count(self.count)
             }
         }
     }
 }
 
-fn main() {
+#[lunatic::main]
+fn main(_m: Mailbox<()>) {
     // Spawn our actor. We get a bridge for sending and receiving messages. Can be cloned for
     // multiple owners. Actor is dropped after all bridges have been dropped.
-    let bridge = wactor::spawn::<Counter>();
+    let actor = wactor::spawn::<Counter>().unwrap();
     // Send our input message. This fails if our actor has panicked (unrecoverable error).
-    bridge.send(Input::AddOne).expect("Dead actor");
-    // Block until a response is received. This also fails if our actor has panicked.
-    let result = bridge.receive();
+    let result = actor.request(Input::AddOne).expect("Dead actor");
     // Assert we received the correct value.
-    assert_eq!(result, Ok(Output::Count(1)));
+    assert_eq!(result, Output::Count(1));
 }
